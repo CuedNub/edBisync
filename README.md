@@ -1,152 +1,98 @@
 # edBisync
 
-Bidirectional sync antara folder lokal dan Google Drive menggunakan `rclone bisync`.
+Wrapper script untuk `rclone bisync` yang dirancang untuk melakukan sinkronisasi dua arah (bidirectional) antara folder lokal dan Google Drive secara aman, stabil, dan terpantau.
 
-## Deskripsi
+## Fitur Utama
 
-`edBisync` adalah wrapper script untuk `rclone bisync` yang menyinkronkan folder lokal dengan Google Drive secara dua arah (bidirectional). Dirancang untuk penggunaan manual (bukan cron) dengan fokus pada keamanan data dan kemudahan preview sebelum eksekusi.
+- **Preview secara Default (Dry-Run)** — Menjalankan `edBisync` tanpa argumen hanya akan mensimulasikan perubahan. Tidak ada data yang diubah sebelum Anda yakin.
+- **Transfer Berurutan (`--transfers 1`)** — Mengupload/mendownload file satu per satu. Sangat aman jika koneksi tidak stabil, mencegah file menggantung setengah jadi, dan memudahkan penyelamatan progres (resume).
+- **Proteksi Rate Limit (`--checkers 4`)** — Membatasi proses pengecekan paralel untuk menghindari error `userRateLimitExceeded` dari API Google Drive (sangat krusial jika menggunakan shared Google Client ID).
+- **Notifikasi Desktop** — Terintegrasi dengan `notify-send` untuk memberikan pemberitahuan visual saat proses sinkronisasi selesai atau gagal (sangat cocok untuk Hyprland/Wayland).
+- **Sistem Lock File** — Mencegah proses sinkronisasi ganda berjalan bersamaan yang dapat merusak cache dan database rclone.
+- **Manajemen Log Terpusat** — Mencatat riwayat sinkronisasi secara detail dan rapi dengan format ukuran yang mudah dibaca (*human-readable*) di `~/.local/share/edBisync/edBisync.log`.
+- **Deteksi Cache Otomatis** — Otomatis mendeteksi jika ini adalah sinkronisasi pertama kali dan akan menyarankan mode `--resync`.
 
 ## Prasyarat
 
-- **OS:** Linux (Arch Linux / Omarchy)
+- **OS:** Linux (Arch Linux / Omarchy / distro lainnya)
 - **Shell:** Bash
-- **rclone:** ≥ 1.58 (teruji di v1.75.1)
-- **Remote rclone:** Sudah dikonfigurasi (tipe `drive`)
-- **notify-send:** Opsional, untuk notifikasi desktop (Hyprland/Wayland)
+- **rclone:** Versi 1.58 atau yang lebih baru (teruji di v1.75.1)
+- **Remote rclone:** Google Drive remote sudah dikonfigurasi (contoh: `8bpCued411:`)
+- **notify-send:** Opsional (untuk notifikasi desktop)
 
 ## Instalasi
+
+Clone repository ini dan jalankan script installer:
 
 ```bash
 git clone git@github.com:CuedNub/edBisync.git
 cd edBisync
-cp edBisync ~/.local/bin/edBisync
-chmod +x ~/.local/bin/edBisync
+./install.sh
 ```
 
-Pastikan `~/.local/bin` ada di `$PATH` Anda.
+Installer otomatis akan:
+1. Menyalin file `edBisync` ke `~/.local/bin/`
+2. Memberikan hak akses eksekusi (`chmod +x`)
+3. Membuat direktori log di `~/.local/share/edBisync/`
+4. Memeriksa apakah `~/.local/bin` sudah terdaftar di `$PATH` Anda.
 
 ## Konfigurasi
 
-Edit variabel di bagian atas script sesuai kebutuhan:
+Sebelum mulai, pastikan variabel konfigurasi di bagian atas script `~/.local/bin/edBisync` sudah sesuai dengan path lokal dan nama remote rclone Anda:
 
 ```bash
+# --- KONFIGURASI ---
 LOCAL_PATH="/home/tobdeuc/GoogleDrive/8bpCued411/"
 REMOTE="8bpCued411:"
 REMOTE_NAME="8bpCued411"
 ```
 
-### Parameter Default
-
-| Parameter | Nilai | Alasan |
-|-----------|-------|--------|
-| `--transfers` | `1` | Upload/download satu per satu. Aman untuk file besar dan koneksi tidak stabil. Memudahkan resume. |
-| `--checkers` | `4` | Mencegah rate limit Google Drive (terutama shared client_id). |
-| `--stats` | `2s` | Update progress setiap 2 detik. |
-| `--human-readable` | aktif | Menampilkan ukuran dalam GB/MB/KB. |
-
 ## Penggunaan
 
 ```
 edBisync          Preview perubahan (dry-run, default, aman)
-edBisync sync     Jalankan sinkronisasi sungguhan
-edBisync resync   Inisialisasi pertama / reset total
-edBisync verify   Cek apakah lokal dan remote sudah sinkron
+edBisync sync     Jalankan sinkronisasi sungguhan (Sequential)
+edBisync resync   Inisialisasi pertama kali / reset total
+edBisync verify   Cek apakah lokal dan remote sudah identik
 edBisync check    Bandingkan isi file byte-level (lambat)
-edBisync help     Tampilkan bantuan
+edBisync help     Tampilkan bantuan ini
 ```
 
-### Alur Kerja Rutin
+### Alur Kerja Harian yang Direkomendasikan
 
-```
-1. edBisync          # Lihat dulu apa yang akan berubah
-2. edBisync sync     # Jika aman, jalankan sync
-3. edBisync verify   # Pastikan sudah sinkron
+```bash
+1. edBisync          # Preview dulu, cek file apa saja yang akan disync/dihapus
+2. edBisync sync     # Jika preview dirasa aman, eksekusi sync sungguhan
+3. edBisync verify   # Opsional, pastikan kedua sisi sudah benar-benar sinkron
 ```
 
-### Inisialisasi Pertama Kali
+### Inisialisasi Pertama (First Run)
+
+Gunakan perintah `resync` untuk membuat database cache awal rclone. Mode ini akan menganggap isi folder lokal sebagai sumber kebenaran (Path1):
 
 ```bash
 edBisync resync
 ```
 
-> **Peringatan:** `--resync` memaksa kedua sisi menjadi identik. Path1 (lokal) menjadi sumber kebenaran. Jalankan `edBisync` (preview) terlebih dahulu untuk memastikan tidak ada data yang akan hilang.
-
-## Fitur
-
-- **Preview by default** — Menjalankan `edBisync` tanpa argumen = dry-run. Tidak ada file yang berubah.
-- **Sequential transfer** — File diproses satu per satu (`--transfers 1`). Jika koneksi terputus, hanya 1 file yang terdampak.
-- **Rate limit protection** — `--checkers 4` mencegah error `userRateLimitExceeded` dari Google Drive API.
-- **Lock file** — Mencegah 2 instance berjalan bersamaan yang bisa merusak data.
-- **Logging** — Semua aktivitas dicatat ke `~/.local/share/edBisync/edBisync.log`.
-- **Notifikasi desktop** — Notifikasi via `notify-send` saat sync selesai/gagal (kompatibel Hyprland).
-- **Auto-detect first run** — Otomatis menambahkan `--resync` jika cache belum ada.
-- **Progress bar** — Menampilkan persentase, kecepatan, dan ETA secara real-time.
-
-## Struktur File
+## Struktur File & Direktori
 
 ```
-~/.local/bin/edBisync              # Script utama
+~/.local/bin/edBisync              # Executable script utama
 ~/.local/share/edBisync/
-├── edBisync.log                   # Log aktivitas
-└── edBisync.lock                  # Lock file (otomatis)
-~/.cache/rclone/bisync/            # Cache rclone (otomatis)
+├── edBisync.log                   # Log aktivitas sinkronisasi
+└── edBisync.lock                  # Lock file (mencegah double-run)
+~/.cache/rclone/bisync/            # Direktori database cache asli rclone
 ```
 
-## Contoh Output
+## Uninstall
 
-### Preview (dry-run)
-```
-══════════════════════════════════════
-  PREVIEW (Dry-Run)
-══════════════════════════════════════
-ℹ️  Mode ini TIDAK mengubah file apapun
+Untuk menghapus `edBisync` beserta log dan file cache rclone-nya secara bersih, jalankan uninstaller dari folder repository:
 
-  Lokal  : /home/tobdeuc/GoogleDrive/8bpCued411/
-  Remote : 8bpCued411:
-  Exclude: _BACKUP_remote-only/**
-  Mode   : transfers=1, checkers=4 (Sequential Upload)
-
-✅ Preview selesai.
-ℹ️  Jika aman, jalankan: edBisync sync
-```
-
-### Verify (sudah sinkron)
-```
-══════════════════════════════════════
-  VERIFY (Cek Sinkronisasi)
-══════════════════════════════════════
-
-Transferred:    0 B / 0 B, -, 0 B/s, ETA -
-Checks:       458 / 458, 100%
-No changes found
-Bisync successful
-
-✅ LOKAL DAN REMOTE SUDAH SINKRON!
-```
-
-## Troubleshooting
-
-### Cache tidak terdeteksi
 ```bash
-ls ~/.cache/rclone/bisync/
+cd edBisync
+./uninstall.sh
 ```
-Periksa apakah nama file cache sesuai dengan pattern di fungsi `is_first_run()`.
-
-### Lock file tersisa setelah crash
-```bash
-rm ~/.local/share/edBisync/edBisync.lock
-```
-
-### Error rate limit Google Drive
-Tunggu beberapa menit, lalu coba lagi. Jika sering terjadi, buat [client_id sendiri](https://rclone.org/drive/#making-your-own-client-id).
-
-### Shared client_id warning
-```
-NOTICE: This remote uses rclone's shared Google Drive client_id,
-which is being retired and will stop working during 2026.
-```
-Solusi: Buat client_id sendiri di [Google Cloud Console](https://rclone.org/drive/#making-your-own-client-id).
 
 ## Lisensi
 
-MIT
+[MIT](LICENSE)
